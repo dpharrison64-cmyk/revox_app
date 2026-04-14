@@ -1,0 +1,39 @@
+name: Build Linux
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.19.0'
+        channel: 'stable'
+    
+    - name: Enable Linux desktop
+      run: flutter config --enable-linux-desktop
+    
+    - name: Get dependencies
+      run: flutter pub get
+    
+    - name: Build Linux release
+      run: flutter build linux --release
+    
+    - name: Create artifact directory
+      run: mkdir -p build-output && cp -r build/linux/x64/release/bundle/* build-output/
+    
+    - name: Upload Linux binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: revox_app-linux
+        path: build-output/
+        retention-days: 30
