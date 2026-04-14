@@ -499,7 +499,7 @@ class _PiDisplayScreenState extends State<PiDisplayScreen> {
                         // Main Timer - wrapped in ValueListenableBuilder for smooth updates
                         ValueListenableBuilder<int>(
                           valueListenable: _timerNotifier,
-                          builder: (context, _, _) {
+                          builder: (context, _, __) {
                             // UPDATE PHASE on every timer tick (every 100ms)
                             _updatePhase();
                             
@@ -690,7 +690,7 @@ class _PiDisplayScreenState extends State<PiDisplayScreen> {
               if (!_isInRestPhase && !_isInReadyPhase && _getNextExerciseName() != null)
                 ValueListenableBuilder<int>(
                   valueListenable: _timerNotifier,
-                  builder: (context, _, _) {
+                  builder: (context, _value, __) {
                     return Positioned(
                       top: 20,
                       right: 20,
@@ -747,7 +747,7 @@ class _PiDisplayScreenState extends State<PiDisplayScreen> {
                           const SizedBox(height: 40),
                           ValueListenableBuilder<int>(
                             valueListenable: _timerNotifier,
-                            builder: (context, _, _) {
+                            builder: (context, _value, __) {
                               return Text(
                                 _formatTime(_restTimeRemaining),
                                 style: GoogleFonts.barlow(
