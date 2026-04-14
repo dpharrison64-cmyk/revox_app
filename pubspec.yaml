@@ -21,6 +21,11 @@ version: 1.0.0+1
 environment:
   sdk: ^3.6.0
 
+# Enable experimental Dart language features
+# ignore: sdk_version_since
+# This enables the null-aware-elements feature needed for the app
+
+
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
 # consider running `flutter pub upgrade --major-versions`. Alternatively,
