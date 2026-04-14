@@ -1,0 +1,81 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getCoachGymId() {
+      return get(/databases/$(database)/documents/coaches/$(request.auth.uid)).data.gymId;
+    }
+
+    function isGymAdmin(gymId) {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/coaches/$(request.auth.uid)).data.role == 'admin' &&
+             get(/databases/$(database)/documents/coaches/$(request.auth.uid)).data.gymId == gymId;
+    }
+
+    function isCoachInGym(gymId) {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/coaches/$(request.auth.uid)).data.gymId == gymId;
+    }
+
+    // Gyms collection
+    match /gyms/{gymId} {
+      // Allow reading gym data (needed for app initialization)
+      allow read: if true;
+      // Gyms are pre-created by admin, this is just for completeness
+      allow create, update, delete: if false;
+    }
+
+    // Coaches collection - allow reading for login verification
+    match /coaches/{coachId} {
+      // Allow reading coach data for login (code verification)
+      allow read: if true;
+      
+      // Coaches are pre-created by admin, no public signup allowed
+      allow create, update, delete: if false;
+    }
+
+    // Workouts collection - filtered by gym
+    match /workouts/{workoutId} {
+      // Anyone can read workouts (for now)
+      allow read: if true;
+      
+      // Coaches can create workouts in their gym
+      allow create: if isAuthenticated() &&
+                       isCoachInGym(request.resource.data.gymId) &&
+                       request.resource.data.coachId == request.auth.uid;
+      
+      // Coaches can update their own workouts
+      allow update: if isAuthenticated() &&
+                       isCoachInGym(resource.data.gymId) &&
+                       resource.data.coachId == request.auth.uid;
+      
+      // Gym admins can update any workout in their gym
+      allow update: if isAuthenticated() && isGymAdmin(resource.data.gymId);
+      
+      // Coaches can delete their own workouts
+      allow delete: if isAuthenticated() &&
+                       isCoachInGym(resource.data.gymId) &&
+                       resource.data.coachId == request.auth.uid;
+      
+      // Gym admins can delete any workout in their gym
+      allow delete: if isAuthenticated() && isGymAdmin(resource.data.gymId);
+    }
+
+    // Active workouts collection - for real-time workout display
+    match /active_workouts/{gymId} {
+      // Allow reading active workouts
+      allow read: if true;
+      
+      // Allow creating/updating active workouts
+      allow create, update: if true;
+      
+      // Allow deleting active workouts
+      allow delete: if true;
+    }
+  }
+}

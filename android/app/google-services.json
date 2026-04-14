@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "929061230268",
+    "project_id": "revox-314e6",
+    "storage_bucket": "revox-314e6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:929061230268:android:9994ac639af41541a022b9",
+        "android_client_info": {
+          "package_name": "com.revox.revox_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDPRH8XzXVChbpWY2f9qPGNyaCqRUHT0eo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

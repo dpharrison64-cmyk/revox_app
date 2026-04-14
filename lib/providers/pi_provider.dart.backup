@@ -1,0 +1,422 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+import '../models/workout.dart';
+import '../services/active_workout_service.dart';
+
+class PiProvider extends ChangeNotifier {
+  final _firestore = FirebaseFirestore.instance;
+  final _activeWorkoutService = ActiveWorkoutService();
+  
+  // This will be set by the PiApp when initialized
+  String? _gymId;
+  String? _lastWorkoutId; // Track workout ID to detect new workouts
+  String? _lastStatus; // Track status to detect workout restart
+  int _lastExerciseIndex = -1; // Track exercise index to detect fresh starts
+  StreamSubscription<Map<String, dynamic>?>? _workoutSubscription; // Store the subscription
+  bool _listenerInitialized = false; // Track if listener was already set up
+  bool _cleanupVerified = false; // Flag to ensure cleanup completes before using data
+  
+  Workout? _activeWorkout;
+  Map<String, dynamic>? _activeWorkoutData;
+  bool _showEndScreen = false;
+  Timer? _updateTimer; // Now nullable
+  int _currentExerciseIndex = 0;
+  bool _isRestPhase = false;
+  int _elapsedSeconds = 0;
+  
+  PiProvider() {
+    print('[PiProvider] Constructor called - PiProvider instance created');
+    _initializeCleanup();
+  }
+  
+  Future<void> _initializeCleanup() async {
+    print('[PiProvider] === CONSTRUCTOR CLEANUP START ===');
+    // At this point, _gymId is still null (not set by PiApp yet)
+    // But we can schedule cleanup for when _gymId is available
+    // This ensures ANY stale workouts are cleared on app start
+    
+    // Wait a bit for _gymId to be set by PiApp
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    if (_gymId != null) {
+      print('[PiProvider] CLEANUP: Deleting any stale workouts for gym: $_gymId');
+      try {
+        await _firestore.collection('active_workouts').doc(_gymId).delete();
+        print('[PiProvider] ✓ Deleted stale workout');
+      } catch (e) {
+        print('[PiProvider] Note: No stale workout found');
+      }
+    }
+  }
+  
+  Workout? get activeWorkout => _activeWorkout;
+  bool get showEndScreen => _showEndScreen;
+  int get currentExerciseIndex => _currentExerciseIndex;
+  bool get isRestPhase => _isRestPhase;
+  int get elapsedSeconds => _elapsedSeconds;
+  Map<String, dynamic>? get activeWorkoutData => _activeWorkoutData;
+  String? get gymId => _gymId; // Expose gym ID so PiNavigator can check if initialized
+
+  void setGymId(String gymId) {
+    _gymId = gymId;
+    print('[PiProvider] setGymId called with: $gymId');
+    // Just start the listener - cleanup already happened in constructor
+    _initializeListener();
+  }
+
+  void _initializeListener() {
+    if (_gymId == null) {
+      print('ERROR: GymId not set in PiProvider');
+      return;
+    }
+    
+    print('[PiProvider] _initializeListener called for gym: $_gymId');
+    
+    // Only initialize once - cancel previous subscription if it exists
+    if (_listenerInitialized) {
+      print('[PiProvider] Listener already initialized, skipping');
+      return;
+    }
+    
+    print('[PiProvider] === STARTING LISTENER INITIALIZATION ===');
+    
+    // CRITICAL: Delete any stale workout document BEFORE subscribing
+    // This ensures we don't immediately see old data
+    print('[PiProvider] CLEANUP: Deleting stale workout before subscribing');
+    _cleanupVerified = false; // Reset flag
+    
+    _firestore.collection('active_workouts').doc(_gymId).delete().then((_) {
+      print('[PiProvider] ✓ Stale workout deleted');
+      
+      // Verify it's really gone
+      _firestore.collection('active_workouts').doc(_gymId).get().then((doc) {
+        if (doc.exists) {
+          print('[PiProvider] ⚠️  Document still exists after delete, forcing another delete');
+          _firestore.collection('active_workouts').doc(_gymId).delete().then((_) {
+            print('[PiProvider] ✓ Forced delete completed');
+            _cleanupVerified = true;
+            print('[PiProvider] ✓✓ CLEANUP VERIFIED - Listener now accepting data');
+          });
+        } else {
+          print('[PiProvider] ✓ Verified: Document is deleted before listener subscribes');
+          _cleanupVerified = true;
+          print('[PiProvider] ✓✓ CLEANUP VERIFIED - Listener now accepting data');
+        }
+      }).catchError((e) {
+        print('[PiProvider] Error verifying delete: $e');
+        // Assume success on error and allow listener to proceed
+        _cleanupVerified = true;
+      });
+    }).catchError((e) {
+      print('[PiProvider] No stale workout found (normal on first startup)');
+      // No document to delete - cleanup verified
+      _cleanupVerified = true;
+      print('[PiProvider] ✓✓ CLEANUP VERIFIED (no prior doc) - Listener now accepting data');
+    });
+    
+    print('[PiProvider] Subscribing to active workout stream');
+    _listenerInitialized = true;
+
+    // Listen to active workout document
+    _workoutSubscription = _activeWorkoutService.getActiveWorkoutStream(_gymId!).listen((data) {
+      _activeWorkoutData = data;
+      
+      // CRITICAL: Don't emit data until cleanup is verified
+      if (!_cleanupVerified) {
+        print('[PiProvider] Data received but cleanup not yet verified, ignoring: ${data != null ? "workout" : "null"}');
+        return;
+      }
+      
+      if (data == null || data['status'] == 'idle') {
+        _activeWorkout = null;
+        _showEndScreen = false;
+        _lastWorkoutId = null;
+        _lastStatus = 'idle';
+        _lastExerciseIndex = -1;
+        _elapsedSeconds = 0;
+        _updateTimer?.cancel();
+        _updateTimer = null;
+        notifyListeners();
+        return;
+      }
+
+  /// CRITICAL: Immediately stops workout and resets everything
+  /// Called when user presses hold-to-stop button on Pi display
+  void resetToIdle() {
+    print('[PiProvider] resetToIdle() - IMMEDIATELY stopping all timers and resetting state');
+    
+    // Step 1: Cancel the update timer immediately
+    _updateTimer?.cancel();
+    _updateTimer = null;
+    
+    // Step 2: Reset all state
+    _activeWorkout = null;
+    _activeWorkoutData = null;
+    _showEndScreen = false;
+    _elapsedSeconds = 0;
+    _lastStatus = 'idle';
+    _lastExerciseIndex = -1;
+    _lastWorkoutId = null;
+    _currentExerciseIndex = 0;
+    _isRestPhase = false;
+    _cleanupVerified = false; // Reset cleanup flag
+    
+    print('[PiProvider] resetToIdle() - State completely reset');
+    notifyListeners();
+  }
+
+  void _initializeListener() {
+    if (_gymId == null) {
+      print('ERROR: GymId not set in PiProvider');
+      return;
+    }
+    
+    print('[PiProvider] _initializeListener called for gym: $_gymId');
+    
+    // Only initialize once - cancel previous subscription if it exists
+    if (_listenerInitialized) {
+      print('[PiProvider] Listener already initialized, skipping');
+      return;
+    }
+    
+    print('[PiProvider] === STARTING LISTENER INITIALIZATION ===');
+    
+    // CRITICAL: Delete any stale workout document BEFORE subscribing
+    // This ensures we don't immediately see old data
+    print('[PiProvider] CLEANUP: Deleting stale workout before subscribing');
+    _cleanupVerified = false; // Reset flag
+    
+    _firestore.collection('active_workouts').doc(_gymId).delete().then((_) {
+      print('[PiProvider] ✓ Stale workout deleted');
+      
+      // Verify it's really gone
+      _firestore.collection('active_workouts').doc(_gymId).get().then((doc) {
+        if (doc.exists) {
+          print('[PiProvider] ⚠️  Document still exists after delete, forcing another delete');
+          _firestore.collection('active_workouts').doc(_gymId).delete().then((_) {
+            print('[PiProvider] ✓ Forced delete completed');
+            _cleanupVerified = true;
+            print('[PiProvider] ✓✓ CLEANUP VERIFIED - Listener now accepting data');
+          });
+        } else {
+          print('[PiProvider] ✓ Verified: Document is deleted before listener subscribes');
+          _cleanupVerified = true;
+          print('[PiProvider] ✓✓ CLEANUP VERIFIED - Listener now accepting data');
+        }
+      }).catchError((e) {
+        print('[PiProvider] Error verifying delete: $e');
+        // Assume success on error and allow listener to proceed
+        _cleanupVerified = true;
+      });
+    }).catchError((e) {
+      print('[PiProvider] No stale workout found (normal on first startup)');
+      // No document to delete - cleanup verified
+      _cleanupVerified = true;
+      print('[PiProvider] ✓✓ CLEANUP VERIFIED (no prior doc) - Listener now accepting data');
+    });
+    
+    print('[PiProvider] Subscribing to active workout stream');
+    _listenerInitialized = true;
+
+    // Listen to active workout document
+    _workoutSubscription = _activeWorkoutService.getActiveWorkoutStream(_gymId!).listen((data) {
+      _activeWorkoutData = data;
+      
+      // CRITICAL: Don't emit data until cleanup is verified
+      if (!_cleanupVerified) {
+        print('[PiProvider] Data received but cleanup not yet verified, ignoring: ${data != null ? "workout" : "null"}');
+        return;
+      }
+      
+      if (data == null || data['status'] == 'idle') {
+        _activeWorkout = null;
+        _showEndScreen = false;
+        _lastWorkoutId = null;
+        _lastStatus = 'idle';
+        _lastExerciseIndex = -1;
+        _elapsedSeconds = 0;
+        _updateTimer?.cancel();
+        _updateTimer = null;
+        notifyListeners();
+        return;
+      }
+
+      if (data['status'] == 'finished') {
+        _showEndScreen = true;
+        _updateTimer?.cancel();
+        _updateTimer = null;
+        _lastStatus = 'finished';
+        _elapsedSeconds = 0; // IMPORTANT: Reset elapsed when workout finishes
+        notifyListeners();
+        
+        // Reset to logo after 2 minutes
+        Future.delayed(const Duration(seconds: 120), () {
+          if (_activeWorkoutData?['status'] == 'finished') {
+            _activeWorkoutService.stopWorkout(_gymId!);
+          }
+        });
+        return;
+      }
+
+      // Load the current exercise index first
+      final currentExerciseIndex = data['currentExerciseIndex'] as int;
+      final currentStatus = data['status'] as String?;
+      
+      // Track if we need to restart the timer (for fresh starts)
+      bool shouldRestartTimer = false;
+      
+      // Detect if this is a fresh start: status transitioned from idle/finished to running
+      if (currentStatus == 'running' && (_lastStatus == null || _lastStatus == 'idle' || _lastStatus == 'finished')) {
+        // Workout just started fresh - ALWAYS reset elapsed time to 0
+        _elapsedSeconds = 0;
+        _lastExerciseIndex = currentExerciseIndex;
+        shouldRestartTimer = true; // CRITICAL: restart timer to cancel old one
+      }
+      
+      // ALSO detect if exercise index suddenly reset to 0 while running (fresh start)
+      // This handles the case where the same workout document is reused
+      if (currentStatus == 'running' && currentExerciseIndex == 0 && _lastExerciseIndex > 0 && _elapsedSeconds > 0) {
+        // Fresh workout started - reset elapsed time
+        _elapsedSeconds = 0;
+        _lastExerciseIndex = 0;
+        shouldRestartTimer = true; // CRITICAL: restart timer to cancel old one
+      }
+      
+      _lastStatus = currentStatus;
+      _lastExerciseIndex = currentExerciseIndex;
+
+      // Check if this is a new workout (workoutId changed)
+      final currentWorkoutId = data['workoutId'] as String?;
+      if (currentWorkoutId != null && currentWorkoutId != _lastWorkoutId) {
+        // New workout ID - also reset elapsed time
+        _elapsedSeconds = 0;
+        _lastWorkoutId = currentWorkoutId;
+        shouldRestartTimer = true; // CRITICAL: restart timer to cancel old one
+      }
+
+      // Load the workout exercises from the data
+      _currentExerciseIndex = currentExerciseIndex;
+      _isRestPhase = data['status'] == 'rest';
+      
+      // Build workout object from data
+      if (_activeWorkout == null && data['workoutId'] != null) {
+        _loadWorkout(data['workoutId'] as String);
+      }
+
+      // Start/restart update timer
+      if (shouldRestartTimer) {
+        // Fresh start detected - MUST cancel old timer and start fresh
+        _updateTimer?.cancel();
+        _updateTimer = null;
+        _startUpdateTimer();
+      } else if (_updateTimer == null || !_updateTimer!.isActive) {
+        // Normal case - start timer if not already running
+        _startUpdateTimer();
+      }
+
+      notifyListeners();
+    });
+  }
+
+  Future<void> _loadWorkout(String workoutId) async {
+    try {
+      final workoutDoc = await _firestore
+          .collection('workouts')
+          .doc(workoutId)
+          .get();
+
+      if (workoutDoc.exists) {
+        final data = workoutDoc.data() as Map<String, dynamic>;
+        data['id'] = workoutDoc.id;
+        _activeWorkout = Workout.fromJson(data);
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error loading workout: $e');
+    }
+  }
+
+  void _startUpdateTimer() {
+    _updateTimer?.cancel(); // Cancel any existing timer
+    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_activeWorkoutData == null) {
+        timer.cancel();
+        _updateTimer = null;
+        return;
+      }
+
+      // ALWAYS increment elapsed seconds - this is the continuous workout timer
+      _elapsedSeconds++;
+      
+      final exercises = (_activeWorkoutData!['exercises'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      
+      if (exercises.isEmpty) {
+        timer.cancel();
+        _updateTimer = null;
+        _activeWorkoutService.stopWorkout(_gymId!);
+        _finishWorkout();
+        return;
+      }
+
+      // Calculate cumulative time at the START of each exercise (including rests)
+      // and determine which exercise we're currently in
+      int cumulativeTime = 0;
+      int lastExerciseIndex = 0;
+      
+      for (int i = 0; i < exercises.length; i++) {
+        final ex = exercises[i];
+        final exDuration = (ex['duration'] as num?)?.toInt() ?? 0;
+        final exRestAfter = (ex['restAfter'] as num?)?.toInt() ?? 0;
+        
+        // If we haven't reached the end of this exercise yet
+        if (_elapsedSeconds < cumulativeTime + exDuration) {
+          // We're in this exercise
+          lastExerciseIndex = i;
+          _isRestPhase = false;
+          _currentExerciseIndex = i;
+          break;
+        }
+        
+        cumulativeTime += exDuration;
+        
+        // If we're in the rest period after this exercise
+        if (exRestAfter > 0 && _elapsedSeconds < cumulativeTime + exRestAfter) {
+          // We're in the rest after this exercise
+          lastExerciseIndex = i;
+          _isRestPhase = true;
+          _currentExerciseIndex = i;
+          break;
+        }
+        
+        cumulativeTime += exRestAfter;
+      }
+      
+      // If we've gone through all exercises and their rests
+      if (_elapsedSeconds >= cumulativeTime && lastExerciseIndex == exercises.length - 1) {
+        // Workout is done
+        timer.cancel();
+        _updateTimer = null;
+        _activeWorkoutService.stopWorkout(_gymId!);
+        _finishWorkout();
+        return;
+      }
+
+      notifyListeners();
+    });
+  }
+
+  void _finishWorkout() {
+    _showEndScreen = true;
+    _updateTimer?.cancel();
+    _updateTimer = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    _workoutSubscription?.cancel();
+    super.dispose();
+  }
+}
