@@ -16,7 +16,7 @@ jobs:
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.22.0'
+        flutter-version: '3.24.3'
         channel: 'stable'
     
     - name: Enable Linux desktop
@@ -39,7 +39,10 @@ jobs:
       run: flutter pub get
     
     - name: Build Linux release
-      run: flutter build linux --release
+      run: |
+        export CFLAGS="-Wno-deprecated-declarations"
+        export CXXFLAGS="-Wno-deprecated-declarations"
+        flutter build linux --release
     
     - name: Create artifact directory
       run: mkdir -p build-output && cp -r build/linux/x64/release/bundle/* build-output/
