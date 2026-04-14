@@ -249,7 +249,7 @@ class _HostSettingsScreenState extends State<HostSettingsScreen> {
             ],
           ),
         ),
-        ?bottomDivider,
+        if (bottomDivider != null) bottomDivider,
       ],
     );
   }
