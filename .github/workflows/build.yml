@@ -16,7 +16,7 @@ jobs:
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.27.0'
+        flutter-version: '3.22.0'
         channel: 'stable'
     
     - name: Enable Linux desktop
@@ -39,7 +39,7 @@ jobs:
       run: flutter pub get
     
     - name: Build Linux release
-      run: flutter build linux --release --enable-experiment=equality-operators --enable-experiment=null-aware-elements
+      run: flutter build linux --release
     
     - name: Create artifact directory
       run: mkdir -p build-output && cp -r build/linux/x64/release/bundle/* build-output/
