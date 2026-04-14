@@ -32,7 +32,7 @@ jobs:
       run: mkdir -p build-output && cp -r build/linux/x64/release/bundle/* build-output/
     
     - name: Upload Linux binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: revox_app-linux
         path: build-output/
