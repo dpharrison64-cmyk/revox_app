@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/workout.dart';
 import '../../models/exercise.dart';
+import '../../services/remote_config_service.dart';
 
 class WebPlayerScreen extends StatefulWidget {
   final Workout workout;
@@ -323,8 +324,10 @@ class _WebPlayerScreenState extends State<WebPlayerScreen>
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
                                       color: isActive
-                                          ? Colors.blue[700]
-                                          : Colors.grey[800],
+                                          ? RemoteConfigService()
+                                              .getActiveExerciseColor()
+                                          : RemoteConfigService()
+                                              .getCompletedExerciseColor(),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Column(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
+import 'services/remote_config_service.dart';
 import 'phone_app.dart';
 import 'web_app.dart';
 
@@ -14,6 +15,8 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    // Initialize Remote Config for dynamic colors
+    await RemoteConfigService().initialize();
   } catch (e) {
     if (!e.toString().contains('duplicate-app')) {
       rethrow;
